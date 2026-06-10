@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>AR · Машина времени · 4 станции</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;font-family:Georgia,serif;background:#13110c;}
+  #container{position:fixed;inset:0;width:100vw;height:100vh;}
+  #container canvas, #container video{position:absolute;}
+  #intro{
+    position:fixed;inset:0;z-index:30;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;text-align:center;color:#f0e6cc;
+    background:radial-gradient(circle at 50% 35%,#2a2114,#13110c);padding:24px;
+  }
+  #intro h1{color:#d9ad44;font-size:28px;margin:0 0 6px;}
+  #intro p{font-size:17px;max-width:340px;line-height:1.5;color:#e3d2a8;margin:6px 0;}
+  #intro .step{font-size:15px;color:#9b8e6a;margin-top:14px;}
+  #startBtn{
+    margin-top:26px;padding:15px 32px;border:none;border-radius:40px;cursor:pointer;
+    background:linear-gradient(180deg,#e8c468,#b9851f);color:#13110c;
+    font-family:Georgia,serif;font-weight:bold;font-size:18px;letter-spacing:.04em;
+    box-shadow:0 6px 20px rgba(201,150,46,.4);
+  }
+  #status{
+    position:fixed;left:50%;bottom:26px;transform:translateX(-50%);z-index:100000;
+    background:rgba(19,17,12,.82);color:#e8c468;border:1px solid #6f5d35;
+    padding:10px 18px;border-radius:30px;font-size:15px;letter-spacing:.03em;
+    max-width:90%;text-align:center;
+  }
+  .hidden{display:none !important;}
+</style>
+<script type="importmap">
+{ "imports": {
+    "three": "./three.module.js",
+    "three/addons/renderers/CSS3DRenderer.js": "./CSS3DRenderer.js"
+} }
+</script>
+</head>
+<body>
+
+  <div id="container"></div>
+
+  <div id="intro">
+    <h1>★ Машина времени · AR ★</h1>
+    <p>Наведи камеру на любую <b>карточку-чертёж</b> (башня, радио, автомобиль, трамвай) — и она оживёт.</p>
+    <div class="step">1. Нажми «Включить камеру»<br>2. Наведи на карточку целиком<br>3. Дождись, пока деталь оживёт</div>
+    <button id="startBtn">Включить камеру</button>
+    <div style="margin-top:20px;font-size:13px;color:#6f5d35;">версия all-1</div>
+  </div>
+
+  <div id="status" class="hidden">Готовлю AR…</div>
+
+  <!-- 4 видео-оживления; индекс совпадает с целью в targets4.mind -->
+  <video id="vid0" src="alive_karkas.mp4"   loop muted playsinline webkit-playsinline preload="auto" crossorigin="anonymous" style="display:none"></video>
+  <video id="vid1" src="alive_signal.mp4"   loop muted playsinline webkit-playsinline preload="auto" crossorigin="anonymous" style="display:none"></video>
+  <video id="vid2" src="alive_movement.mp4" loop muted playsinline webkit-playsinline preload="auto" crossorigin="anonymous" style="display:none"></video>
+  <video id="vid3" src="alive_energy.mp4"   loop muted playsinline webkit-playsinline preload="auto" crossorigin="anonymous" style="display:none"></video>
+
+<script type="module">
+  import * as THREE from 'three';
+  import { MindARThree } from './mindar-image-three.prod.js';
+
+  var statusEl = document.getElementById('status');
+  var intro = document.getElementById('intro');
+  var names = ['Каркас','Сигнал','Движение','Энергия'];
+  var vids = [0,1,2,3].map(function(i){ return document.getElementById('vid'+i); });
+
+  function setStatus(msg){ statusEl.classList.remove('hidden'); statusEl.textContent = msg; }
+  window.addEventListener('error', function(e){ setStatus('⚠ Ошибка: ' + (e.message||e)); });
+  window.addEventListener('unhandledrejection', function(e){
+    var r=e.reason; setStatus('⚠ Ошибка: ' + (r && r.message ? r.message : r));
+  });
+
+  document.getElementById('startBtn').addEventListener('click', start, { once:true });
+
+  async function start(){
+    intro.classList.add('hidden');
+    setStatus('Включаю камеру…');
+    // разблокируем все видео жестом пользователя
+    for (const v of vids){ v.muted = true; try{ await v.play(); v.pause(); v.currentTime=0; }catch(e){} }
+
+    try {
+      const mindarThree = new MindARThree({
+        container: document.querySelector('#container'),
+        imageTargetSrc: './targets4.mind',
+        uiLoading:'no', uiScanning:'no', uiError:'no',
+        filterMinCF:0.0001, filterBeta:0.001
+      });
+      const { renderer, scene, camera } = mindarThree;
+
+      for (let i=0; i<4; i++){
+        const tex = new THREE.VideoTexture(vids[i]);
+        const geo = new THREE.PlaneGeometry(1, 1.4); // соотношение карточки 760x1064
+        const mat = new THREE.MeshBasicMaterial({ map: tex });
+        const plane = new THREE.Mesh(geo, mat);
+        const anchor = mindarThree.addAnchor(i);
+        anchor.group.add(plane);
+        (function(idx){
+          anchor.onTargetFound = () => { setStatus('⚙ ' + names[idx] + ' оживает!'); vids[idx].play().catch(()=>{}); };
+          anchor.onTargetLost  = () => { setStatus('Ищу карточку… наведи камеру'); vids[idx].pause(); };
+        })(i);
+      }
+
+      await mindarThree.start();
+      setStatus('Ищу карточку… наведи камеру');
+      renderer.setAnimationLoop(() => renderer.render(scene, camera));
+    } catch (err) {
+      setStatus('⚠ Камера/AR не запустились: ' + (err && err.message ? err.message : err));
+    }
+  }
+</script>
+</body>
+</html>
